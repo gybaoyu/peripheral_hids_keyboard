@@ -1,0 +1,1 @@
+python uf2conv.py ../build/merged.hex --family 0xADA52840 --convert --output nrf52840.uf2
