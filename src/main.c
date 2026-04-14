@@ -551,53 +551,94 @@ static void hid_init(void)
 	struct bt_hids_outp_feat_rep *hids_outp_rep;
 
 	static const uint8_t report_map[] = {
-		0x05, 0x01,       /* Usage Page (Generic Desktop) */
-		0x09, 0x06,       /* Usage (Keyboard) */
-		0xA1, 0x01,       /* Collection (Application) */
-
-		/* Keys */
-#if INPUT_REP_KEYS_REF_ID
-		0x85, INPUT_REP_KEYS_REF_ID,
-#endif
+		0x05, 0x01,       /* Usage Page (Generic Desktop) - 通用桌面 */
+		0x09, 0x06,       /* Usage (Keyboard) - 键盘设备 */
+		0xA1, 0x01,       /* Collection (Application) - 应用集合 */
+		
+		/* 修饰键（Ctrl, Shift, Alt, Win等） */
 		0x05, 0x07,       /* Usage Page (Key Codes) */
-		0x19, 0xe0,       /* Usage Minimum (224) */
-		0x29, 0xe7,       /* Usage Maximum (231) */
+		0x19, 0xe0,       /* Usage Minimum (224) - 左Ctrl */
+		0x29, 0xe7,       /* Usage Maximum (231) - 右Win */
 		0x15, 0x00,       /* Logical Minimum (0) */
 		0x25, 0x01,       /* Logical Maximum (1) */
-		0x75, 0x01,       /* Report Size (1) */
-		0x95, 0x08,       /* Report Count (8) */
+		0x75, 0x01,       /* Report Size (1 bit) */
+		0x95, 0x08,       /* Report Count (8个修饰键) */
 		0x81, 0x02,       /* Input (Data, Variable, Absolute) */
-
-		0x95, 0x01,       /* Report Count (1) */
-		0x75, 0x08,       /* Report Size (8) */
-		0x81, 0x01,       /* Input (Constant) reserved byte(1) */
-
-		0x95, 0x06,       /* Report Count (6) */
-		0x75, 0x08,       /* Report Size (8) */
+		
+		/* 保留字节 */	static const uint8_t report_map[] = {
+		0x05, 0x01,       /* Usage Page (Generic Desktop) - 通用桌面 */
+		0x09, 0x06,       /* Usage (Keyboard) - 键盘设备 */
+		0xA1, 0x01,       /* Collection (Application) - 应用集合 */
+		
+		/* 修饰键（Ctrl, Shift, Alt, Win等） */
+		0x05, 0x07,       /* Usage Page (Key Codes) */
+		0x19, 0xe0,       /* Usage Minimum (224) - 左Ctrl */
+		0x29, 0xe7,       /* Usage Maximum (231) - 右Win */
 		0x15, 0x00,       /* Logical Minimum (0) */
-		0x25, 0x65,       /* Logical Maximum (101) */
+		0x25, 0x01,       /* Logical Maximum (1) */
+		0x75, 0x01,       /* Report Size (1 bit) */
+		0x95, 0x08,       /* Report Count (8个修饰键) */
+		0x81, 0x02,       /* Input (Data, Variable, Absolute) */
+		
+		/* 保留字节 */
+		0x95, 0x01,       /* Report Count (1) */
+		0x75, 0x08,       /* Report Size (8 bits) */
+		0x81, 0x01,       /* Input (Constant, reserved) */
+		
+		/* 普通按键数组（你的A-P按键在这里）*/
+		0x95, 0x06,       /* Report Count (6) - 最多6键同按 */
+		0x75, 0x08,       /* Report Size (8 bits) */
+		0x15, 0x00,       /* Logical Minimum (0) */
+		0x25, 0x65,       /* Logical Maximum (101) - 支持0-101所有键 */
 		0x05, 0x07,       /* Usage Page (Key codes) */
 		0x19, 0x00,       /* Usage Minimum (0) */
 		0x29, 0x65,       /* Usage Maximum (101) */
-		0x81, 0x00,       /* Input (Data, Array) Key array(6 bytes) */
-
-		/* LED */
-#if OUTPUT_REP_KEYS_REF_ID
-		0x85, OUTPUT_REP_KEYS_REF_ID,
-#endif
+		0x81, 0x00,       /* Input (Data, Array) */
+		
+		/* LED指示灯 */
 		0x95, 0x05,       /* Report Count (5) */
-		0x75, 0x01,       /* Report Size (1) */
-		0x05, 0x08,       /* Usage Page (Page# for LEDs) */
-		0x19, 0x01,       /* Usage Minimum (1) */
-		0x29, 0x05,       /* Usage Maximum (5) */
-		0x91, 0x02,       /* Output (Data, Variable, Absolute), */
-				  /* Led report */
+		0x75, 0x01,       /* Report Size (1 bit) */
+		0x05, 0x08,       /* Usage Page (LEDs) */
+		0x19, 0x01,       /* Usage Minimum (1) - Num Lock */
+		0x29, 0x05,       /* Usage Maximum (5) - Kana */
+		0x91, 0x02,       /* Output (Data, Variable, Absolute) */
+		
+		/* LED填充位 */
 		0x95, 0x01,       /* Report Count (1) */
-		0x75, 0x03,       /* Report Size (3) */
-		0x91, 0x01,       /* Output (Data, Variable, Absolute), */
-				  /* Led report padding */
+		0x75, 0x03,       /* Report Size (3 bits) */
+		0x91, 0x01,       /* Output (Constant) */
+		
+		0xC0              /* End Collection */
+	};
 
-		0xC0              /* End Collection (Application) */
+		0x95, 0x01,       /* Report Count (1) */
+		0x75, 0x08,       /* Report Size (8 bits) */
+		0x81, 0x01,       /* Input (Constant, reserved) */
+		
+		/* 普通按键数组（你的A-P按键在这里）*/
+		0x95, 0x06,       /* Report Count (6) - 最多6键同按 */
+		0x75, 0x08,       /* Report Size (8 bits) */
+		0x15, 0x00,       /* Logical Minimum (0) */
+		0x25, 0x65,       /* Logical Maximum (101) - 支持0-101所有键 */
+		0x05, 0x07,       /* Usage Page (Key codes) */
+		0x19, 0x00,       /* Usage Minimum (0) */
+		0x29, 0x65,       /* Usage Maximum (101) */
+		0x81, 0x00,       /* Input (Data, Array) */
+		
+		/* LED指示灯 */
+		0x95, 0x05,       /* Report Count (5) */
+		0x75, 0x01,       /* Report Size (1 bit) */
+		0x05, 0x08,       /* Usage Page (LEDs) */
+		0x19, 0x01,       /* Usage Minimum (1) - Num Lock */
+		0x29, 0x05,       /* Usage Maximum (5) - Kana */
+		0x91, 0x02,       /* Output (Data, Variable, Absolute) */
+		
+		/* LED填充位 */
+		0x95, 0x01,       /* Report Count (1) */
+		0x75, 0x03,       /* Report Size (3 bits) */
+		0x91, 0x01,       /* Output (Constant) */
+		
+		0xC0              /* End Collection */
 	};
 
 	hids_init_obj.rep_map.data = report_map;
