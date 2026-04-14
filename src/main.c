@@ -27,7 +27,23 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <bluetooth/services/hids.h>
 #include <zephyr/bluetooth/services/dis.h>
+#if IS_ENABLED(CONFIG_DK_LIBRARY)
 #include <dk_buttons_and_leds.h>
+#else
+/* Allow building on custom boards without DK buttons/LED helpers. */
+#define DK_LED1 0
+#define DK_LED2 1
+#define DK_LED3 2
+#define DK_LED4 3
+#define DK_BTN1_MSK BIT(0)
+#define DK_BTN2_MSK BIT(1)
+#define DK_BTN4_MSK BIT(3)
+#define dk_set_led_on(...)  do { } while (0)
+#define dk_set_led_off(...) do { } while (0)
+#define dk_set_led(...)     do { } while (0)
+#define dk_buttons_init(...) (0)
+#define dk_leds_init(...)    (0)
+#endif
 
 #include "app_nfc.h"
 
@@ -87,6 +103,40 @@
  */
 #define INPUT_REPORT_KEYS_MAX_LEN (1 + 1 + KEY_PRESS_MAX)
 
+ #define MATRIX_ROWS 4
+ #define MATRIX_COLS 4
+ #define MATRIX_KEYS (MATRIX_ROWS * MATRIX_COLS)
+ 
+ struct matrix_pin {
+        const struct device *port;
+        gpio_pin_t pin;
+ };
+ 
+ #define PIN0(n) { DEVICE_DT_GET(DT_NODELABEL(gpio0)), (n) }
+ #define PIN1(n) { DEVICE_DT_GET(DT_NODELABEL(gpio1)), (n) }
+ 
+ static const struct matrix_pin row_pins[MATRIX_ROWS] = {
+        PIN0(17), PIN0(20), PIN0(22), PIN0(24),  /* D2 D3 D4 D5 */
+ };
+ 
+ static const struct matrix_pin col_pins[MATRIX_COLS] = {
+        PIN1(0), PIN0(11), PIN1(4), PIN1(6),     /* D6 D7 D8 D9 */
+ };
+ 
+ /* A~P */
+ static const uint8_t keymap[MATRIX_KEYS] = {
+        0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B,
+        0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13
+ };
+ 
+static uint16_t matrix_prev_state;
+
+/* Used by matrix_process(); real definitions are below. */
+static int hid_buttons_press(const uint8_t *keys, size_t cnt);
+static int hid_buttons_release(const uint8_t *keys, size_t cnt);
+
 /* Current report map construction requires exactly 8 buttons */
 BUILD_ASSERT((KEY_CTRL_CODE_MAX - KEY_CTRL_CODE_MIN) + 1 == 8);
 
@@ -107,6 +157,72 @@ enum {
 enum {
 	INPUT_REP_KEYS_IDX = 0
 };
+
+ static void matrix_init(void)
+ {
+        for (int i = 0; i < MATRIX_ROWS; i++) {
+                gpio_pin_configure(row_pins[i].port, row_pins[i].pin, GPIO_INPUT);
+        }
+        for (int i = 0; i < MATRIX_COLS; i++) {
+                gpio_pin_configure(col_pins[i].port, col_pins[i].pin, GPIO_INPUT | GPIO_PULL_UP);
+        }
+ }
+ 
+ static uint16_t matrix_scan_state(void)
+ {
+        uint16_t state = 0;
+ 
+        for (int r = 0; r < MATRIX_ROWS; r++) {
+                /* 其他行高阻，避免行间打架 */
+                for (int i = 0; i < MATRIX_ROWS; i++) {
+                        gpio_pin_configure(row_pins[i].port, row_pins[i].pin, GPIO_INPUT);
+                }
+                /* 当前行拉低 */
+                gpio_pin_configure(row_pins[r].port, row_pins[r].pin, GPIO_OUTPUT_LOW);
+ 
+                k_busy_wait(30);
+ 
+                for (int c = 0; c < MATRIX_COLS; c++) {
+                        int v = gpio_pin_get(col_pins[c].port, col_pins[c].pin);
+                        if (v == 0) { /* 按下：列被拉低 */
+                                state |= BIT(r * MATRIX_COLS + c);
+                        }
+                }
+        }
+ 
+        /* 扫描结束后恢复高阻 */
+        for (int i = 0; i < MATRIX_ROWS; i++) {
+                gpio_pin_configure(row_pins[i].port, row_pins[i].pin, GPIO_INPUT);
+        }
+ 
+        return state;
+ }
+ 
+ static void matrix_process(void)
+ {
+        uint16_t now = matrix_scan_state();
+        uint16_t changed = now ^ matrix_prev_state;
+ 
+        for (int i = 0; i < MATRIX_KEYS; i++) {
+                if (changed & BIT(i)) {
+                        uint8_t kc = keymap[i];
+                        bool pressed = (now & BIT(i)) != 0;
+                        char ch = 'A' + i;   /* 0..15 -> A..P */
+ 
+                        printk("KEY %c %s (r%d c%d, hid=0x%02X)\n",
+                               ch, pressed ? "DOWN" : "UP",
+                               i / MATRIX_COLS, i % MATRIX_COLS, kc);
+ 
+                        if (pressed) {
+                                hid_buttons_press(&kc, 1);
+                        } else {
+                                hid_buttons_release(&kc, 1);
+                        }
+                }
+        }
+ 
+        matrix_prev_state = now;
+ }
 
 /* HIDS instance. */
 BT_HIDS_DEF(hids_obj,
@@ -522,31 +638,43 @@ static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 	printk("Passkey for %s: %06u\n", addr, passkey);
 }
 
-static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
-{
-	int err;
+// static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
+// {
+// 	int err;
 
-	struct pairing_data_mitm pairing_data;
+// 	struct pairing_data_mitm pairing_data;
 
-	pairing_data.conn    = bt_conn_ref(conn);
-	pairing_data.passkey = passkey;
+// 	pairing_data.conn    = bt_conn_ref(conn);
+// 	pairing_data.passkey = passkey;
 
-	err = k_msgq_put(&mitm_queue, &pairing_data, K_NO_WAIT);
-	if (err) {
-		printk("Pairing queue is full. Purge previous data.\n");
-	}
+// 	err = k_msgq_put(&mitm_queue, &pairing_data, K_NO_WAIT);
+// 	if (err) {
+// 		printk("Pairing queue is full. Purge previous data.\n");
+// 	}
 
-	/* In the case of multiple pairing requests, trigger
-	 * pairing confirmation which needed user interaction only
-	 * once to avoid display information about all devices at
-	 * the same time. Passkey confirmation for next devices will
-	 * be proccess from queue after handling the earlier ones.
-	 */
-	if (k_msgq_num_used_get(&mitm_queue) == 1) {
-		k_work_submit(&pairing_work);
-	}
-}
-
+// 	/* In the case of multiple pairing requests, trigger
+// 	 * pairing confirmation which needed user interaction only
+// 	 * once to avoid display information about all devices at
+// 	 * the same time. Passkey confirmation for next devices will
+// 	 * be proccess from queue after handling the earlier ones.
+// 	 */
+// 	if (k_msgq_num_used_get(&mitm_queue) == 1) {
+// 		k_work_submit(&pairing_work);
+// 	}
+// }
+ static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
+ {
+        char addr[BT_ADDR_LE_STR_LEN];
+        int err;
+ 
+        bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+        printk("Auto-accept passkey for %s: %06u\n", addr, passkey);
+ 
+        err = bt_conn_auth_passkey_confirm(conn);
+        if (err) {
+                printk("Auto passkey confirm failed: %d\n", err);
+        }
+ }
 
 static void auth_cancel(struct bt_conn *conn)
 {
@@ -759,7 +887,7 @@ static int hid_kbd_state_key_clear(uint8_t key)
  *
  *  @return 0 on success or negative error code.
  */
-static int hid_buttons_press(const uint8_t *keys, size_t cnt)
+int hid_buttons_press(const uint8_t *keys, size_t cnt)
 {
 	while (cnt--) {
 		int err;
@@ -782,7 +910,7 @@ static int hid_buttons_press(const uint8_t *keys, size_t cnt)
  *
  *  @return 0 on success or negative error code.
  */
-static int hid_buttons_release(const uint8_t *keys, size_t cnt)
+int hid_buttons_release(const uint8_t *keys, size_t cnt)
 {
 	while (cnt--) {
 		int err;
@@ -904,20 +1032,20 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 }
 
 
-static void configure_gpio(void)
-{
-	int err;
+// static void configure_gpio(void)
+// {
+// 	int err;
 
-	err = dk_buttons_init(button_changed);
-	if (err) {
-		printk("Cannot init buttons (err: %d)\n", err);
-	}
+// 	err = dk_buttons_init(button_changed);
+// 	if (err) {
+// 		printk("Cannot init buttons (err: %d)\n", err);
+// 	}
 
-	err = dk_leds_init();
-	if (err) {
-		printk("Cannot init LEDs (err: %d)\n", err);
-	}
-}
+// 	err = dk_leds_init();
+// 	if (err) {
+// 		printk("Cannot init LEDs (err: %d)\n", err);
+// 	}
+// }
 
 
 static void bas_notify(void)
@@ -941,8 +1069,8 @@ int main(void)
 
 	printk("Starting Bluetooth Peripheral HIDS keyboard sample\n");
 
-	configure_gpio();
-
+	// configure_gpio();
+	matrix_init();
 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
 	if (err) {
 		printk("Failed to register authorization callbacks.\n");
@@ -987,5 +1115,7 @@ int main(void)
 		k_sleep(K_MSEC(ADV_LED_BLINK_INTERVAL));
 		/* Battery level simulation */
 		bas_notify();
+		matrix_process();
+		k_sleep(K_MSEC(500));
 	}
 }
